@@ -1,0 +1,733 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>News Bias Annotator</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Gun.js CDN -->
+    <script src="https://cdn.jsdelivr.net/npm/gun/gun.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: #f8fafc;
+        }
+
+        input[type="range"] {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 100%;
+            height: 8px;
+            border-radius: 999px;
+            outline: none;
+            cursor: pointer;
+            background: linear-gradient(to right,
+                    #3b82f6 0%, #93c5fd 20%, #d1d5db 40%,
+                    #d1d5db 60%, #fca5a5 80%, #ef4444 100%);
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 28px; height: 28px; border-radius: 50%;
+            background: #fff; border: 3px solid #6366f1;
+            cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+            transition: all 0.15s ease;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover {
+            border-color: #4f46e5; box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+            transform: scale(1.1);
+        }
+        input[type="range"]::-moz-range-thumb {
+            width: 28px; height: 28px; border-radius: 50%;
+            background: #fff; border: 3px solid #6366f1;
+            cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .article-card {
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+        .article-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 24px rgba(0,0,0,0.08);
+        }
+        .article-card.submitted {
+            border-left: 4px solid #10b981;
+            background: #f0fdf6;
+        }
+
+        @keyframes slideInUp {
+            from { transform: translateY(100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        @keyframes slideOutDown {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(100%); opacity: 0; }
+        }
+        .toast-enter { animation: slideInUp 0.35s cubic-bezier(0.4,0,0.2,1) forwards; }
+        .toast-exit { animation: slideOutDown 0.3s cubic-bezier(0.4,0,0.2,1) forwards; }
+
+        @keyframes shimmer {
+            0% { background-position: -400px 0; }
+            100% { background-position: 400px 0; }
+        }
+        .skeleton {
+            background: linear-gradient(90deg, #e2e8f0 25%, #f1f5f9 50%, #e2e8f0 75%);
+            background-size: 800px 100%;
+            animation: shimmer 1.5s infinite;
+            border-radius: 8px;
+        }
+
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+        .bias-dot {
+            width: 12px; height: 12px; border-radius: 50%; display: inline-block;
+            transition: background-color 0.2s ease; flex-shrink: 0;
+        }
+
+        .article-full-text {
+            max-height: 0;
+            overflow: hidden;
+            transition: max-height 0.4s ease, opacity 0.3s ease;
+            opacity: 0;
+        }
+        .article-full-text.expanded {
+            max-height: 2000px;
+            opacity: 1;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-slate-50 to-gray-100">
+
+    <!-- Toast Container -->
+    <div id="toast-container" class="fixed bottom-6 right-6 z-50 flex flex-col gap-3 pointer-events-none"></div>
+
+    <!-- Header -->
+    <header class="bg-white border-b border-gray-200 sticky top-0 z-40 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
+            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <div class="w-10 h-10 bg-indigo-600 rounded-xl flex items-center justify-center shadow-md">
+                        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+                        </svg>
+                    </div>
+                    <div>
+                        <h1 class="text-xl font-bold text-gray-900 tracking-tight">Data collection</h1>
+                        <p class="text-sm text-gray-500">Look through and show what you think the political bias is.</p>
+                    </div>
+                </div>
+                <div class="flex items-center gap-3 flex-wrap">
+                    <span id="stats-badge" class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
+                        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                        <span id="scored-count">0</span> scored
+                    </span>
+                    <button id="shuffle-btn"
+                    class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-all text-sm font-medium shadow-sm">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    Shuffle
+                </button>
+                <button id="refresh-btn"
+                class="inline-flex items-center gap-2 px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 hover:border-gray-400 transition-all text-sm font-medium shadow-sm">
+                <svg id="refresh-icon" class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                    d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                </svg>
+                Refresh Feeds
+            </button>
+            <button id="export-btn"
+            class="inline-flex items-center gap-2 px-5 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-all text-sm font-semibold shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600 disabled:hover:shadow-md">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+            Export JSON
+        </button>
+    </div>
+</div>
+</div>
+</header>
+
+<main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+    <div id="loading-container" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+    <div id="error-container" class="hidden text-center py-16">
+        <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-10 max-w-lg mx-auto">
+            <svg class="w-16 h-16 text-red-400 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+                d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <h3 class="text-xl font-semibold text-gray-800 mb-2">Failed to Load Feeds</h3>
+            <p id="error-message" class="text-gray-500 mb-6">All proxies and feeds are currently unavailable.</p>
+            <button onclick="location.reload()"
+            class="px-6 py-3 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors font-medium shadow-sm">
+            Retry
+        </button>
+    </div>
+</div>
+
+<div id="articles-grid" class="hidden grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6"></div>
+
+<div id="empty-state" class="hidden text-center py-16">
+    <div class="bg-white rounded-2xl shadow-sm border border-gray-200 p-10 max-w-lg mx-auto">
+        <svg class="w-16 h-16 text-gray-300 mx-auto mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5"
+            d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-3.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
+        </svg>
+        <h3 class="text-xl font-semibold text-gray-800 mb-2">No Articles Found</h3>
+        <p class="text-gray-500">Feeds were fetched but contained no articles. Try refreshing later.</p>
+    </div>
+</div>
+</main>
+
+<footer class="border-t border-gray-200 bg-white mt-12">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-sm text-gray-400">
+        Sources hidden · Full articles available · Scores stored with Gun.js
+    </div>
+</footer>
+
+<script>
+    (function() {
+        // ───────────── CONFIG ─────────────
+        const CORS_PROXIES = [
+            'https://api.allorigins.win/raw?url=',
+            'https://corsproxy.io/?',
+            'https://api.codetabs.com/v1/proxy?quest=',
+            'https://thingproxy.freeboard.io/fetch/'
+        ];
+
+        const RSS_FEEDS = [
+            { name: 'Fox News', url: 'https://feeds.foxnews.com/foxnews/latest', color: 'bg-red-500' },
+            { name: 'NPR News', url: 'https://feeds.npr.org/1001/rss.xml', color: 'bg-blue-500' },
+            { name: 'BBC News', url: 'https://feeds.bbci.co.uk/news/rss.xml', color: 'bg-amber-600' },
+            { name: 'Reuters', url: 'https://www.reutersagency.com/feed/', color: 'bg-orange-500' },
+            { name: 'AP News', url: 'https://feeds.apnews.com/apnews/topnews', color: 'bg-gray-700' },
+        ];
+
+        const MAX_SNIPPET_LENGTH = 180;
+
+        // ───────────── GUN DB ─────────────
+        // Initialize Gun (local-only by default; no peers)
+        const gun = Gun();
+
+        // ───────────── STATE ─────────────
+        let allArticles = [];          // { id, title, snippet, fullText, source, sourceColor, feedUrl }
+        let submittedScores = {};     // cached in-memory copy
+        let isFetching = false;
+
+        // ───────────── DOM ELEMENTS ─────────────
+        const loadingContainer = document.getElementById('loading-container');
+        const errorContainer = document.getElementById('error-container');
+        const errorMessage = document.getElementById('error-message');
+        const articlesGrid = document.getElementById('articles-grid');
+        const emptyState = document.getElementById('empty-state');
+        const scoredCountEl = document.getElementById('scored-count');
+        const statsBadge = document.getElementById('stats-badge');
+        const shuffleBtn = document.getElementById('shuffle-btn');
+        const refreshBtn = document.getElementById('refresh-btn');
+        const refreshIcon = document.getElementById('refresh-icon');
+        const exportBtn = document.getElementById('export-btn');
+        const toastContainer = document.getElementById('toast-container');
+
+        // ───────────── UTILS ─────────────
+        function generateArticleId(title, source) {
+            const str = `${source}|${(title||'').trim().toLowerCase()}`;
+            let hash = 0;
+            for (let i = 0; i < str.length; i++) {
+                const char = str.charCodeAt(i);
+                hash = ((hash << 5) - hash) + char;
+                hash |= 0;
+            }
+            return `article_${Math.abs(hash)}_${source.replace(/\s+/g, '_').toLowerCase()}`;
+        }
+
+        function stripHtml(html) {
+            const temp = document.createElement('div');
+            temp.innerHTML = html;
+            let text = temp.textContent || temp.innerText || '';
+            return text.replace(/\s+/g, ' ').trim();
+        }
+
+        function truncateText(text, maxLen) {
+            if (text.length <= maxLen) return text;
+            return text.substring(0, text.lastIndexOf(' ', maxLen)) + '…';
+        }
+
+        function getBiasLabel(score) {
+            if (score <= -0.6) return 'Strong Left';
+            if (score <= -0.2) return 'Moderate Left';
+            if (score <= 0.1) return 'Center';
+            if (score <= 0.5) return 'Moderate Right';
+            return 'Strong Right';
+        }
+
+        function getBiasDotColor(score) {
+            if (score <= -0.6) return 'bg-blue-700';
+            if (score <= -0.2) return 'bg-blue-400';
+            if (score <= 0.1) return 'bg-gray-400';
+            if (score <= 0.5) return 'bg-red-400';
+            return 'bg-red-600';
+        }
+
+        function shuffleArray(arr) {
+            for (let i = arr.length - 1; i > 0; i--) {
+                const j = Math.floor(Math.random() * (i + 1));
+                [arr[i], arr[j]] = [arr[j], arr[i]];
+            }
+            return arr;
+        }
+
+        function showToast(message, type = 'success') {
+            const toast = document.createElement('div');
+            const bgColor = type === 'success' ? 'bg-emerald-600' : type === 'error' ? 'bg-red-500' : 'bg-gray-700';
+            const icon = type === 'success' ?
+                `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>` :
+                type === 'error' ?
+                `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>` :
+                `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>`;
+            toast.className = `pointer-events-auto ${bgColor} text-white px-5 py-3 rounded-xl shadow-lg flex items-center gap-3 toast-enter text-sm font-medium max-w-sm`;
+            toast.innerHTML = `${icon}<span>${message}</span>`;
+            toastContainer.appendChild(toast);
+            setTimeout(() => {
+                toast.classList.remove('toast-enter');
+                toast.classList.add('toast-exit');
+                toast.addEventListener('animationend', () => {
+                    if (toast.parentNode) toast.parentNode.removeChild(toast);
+                }, { once: true });
+            }, 2500);
+        }
+
+        // ───────────── GUN SUPPORT ─────────────
+        function loadSubmissionsFromGun() {
+            return new Promise((resolve) => {
+                const submissions = {};
+                gun.get('submissions').map().once((data, key) => {
+                    if (data && key) {
+                        submissions[key] = data;
+                    }
+                });
+                // Gun loads asynchronously; we wait a short time to collect all.
+                // To be safe, we use a timeout (Gun has no built-in "all loaded" for map)
+                setTimeout(() => {
+                    submittedScores = submissions;
+                    resolve();
+                }, 500);
+            });
+        }
+
+        function saveSubmissionToGun(articleId, scoreData) {
+            gun.get('submissions').get(articleId).put(scoreData);
+        }
+
+        // ───────────── SCORED COUNT UPDATE ─────────────
+        function updateScoredCount() {
+            const count = Object.keys(submittedScores).length;
+            scoredCountEl.textContent = count;
+            statsBadge.classList.toggle('bg-gray-100', count === 0);
+            statsBadge.classList.toggle('text-gray-700', count === 0);
+            statsBadge.classList.toggle('bg-emerald-100', count > 0);
+            statsBadge.classList.toggle('text-emerald-700', count > 0);
+            exportBtn.disabled = (count === 0);
+        }
+
+        // ───────────── FETCH & PARSE ─────────────
+        async function fetchFeed(feed) {
+            const encodedUrl = encodeURIComponent(feed.url);
+            let lastError = null;
+            for (const proxyTemplate of CORS_PROXIES) {
+                try {
+                    const proxyUrl = proxyTemplate + encodedUrl;
+                    const response = await fetch(proxyUrl, {
+                        method: 'GET',
+                        headers: { 'Accept': 'application/rss+xml, application/xml, text/xml, */*' },
+                        signal: AbortSignal.timeout(8000),
+                    });
+                    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+                    const text = await response.text();
+                    if (!text || text.trim().length === 0) throw new Error('Empty response');
+                    return text;
+                } catch (err) {
+                    console.warn(`Proxy ${proxyTemplate} failed for ${feed.name}:`, err.message);
+                    lastError = err;
+                }
+            }
+            throw new Error(`All proxies exhausted for ${feed.name}. Last error: ${lastError?.message || 'Unknown'}`);
+        }
+
+        function parseRSS(xmlText, feed) {
+            const parser = new DOMParser();
+            const doc = parser.parseFromString(xmlText, 'application/xml');
+            const parseError = doc.querySelector('parsererror');
+            if (parseError) {
+                const doc2 = parser.parseFromString(xmlText, 'text/xml');
+                if (doc2.querySelector('parsererror')) throw new Error('Failed to parse RSS XML');
+                return extractItems(doc2, feed);
+            }
+            return extractItems(doc, feed);
+        }
+
+        function extractItems(doc, feed) {
+            const items = doc.querySelectorAll('item');
+            const articles = [];
+            items.forEach((item) => {
+                const titleEl = item.querySelector('title');
+                const descriptionEl = item.querySelector('description');
+                const contentEncodedEl = item.querySelector('content\\:encoded, encoded');
+
+                const rawTitle = titleEl ? titleEl.textContent : '';
+                const title = stripHtml(rawTitle);
+                const rawDesc = contentEncodedEl ? contentEncodedEl.textContent :
+                                descriptionEl ? descriptionEl.textContent : '';
+                const fullText = stripHtml(rawDesc);
+                if (!title) return;
+
+                const articleId = generateArticleId(title, feed.name);
+                const snippet = truncateText(fullText, MAX_SNIPPET_LENGTH);
+                articles.push({
+                    id: articleId,
+                    title: title.trim(),
+                    snippet: snippet,
+                    fullText: fullText,
+                    source: feed.name,
+                    sourceColor: feed.color,
+                    feedUrl: feed.url,
+                });
+            });
+            return articles;
+        }
+
+        async function fetchAllFeeds() {
+            if (isFetching) return;
+            isFetching = true;
+            showLoadingState();
+            errorContainer.classList.add('hidden');
+            articlesGrid.classList.add('hidden');
+            emptyState.classList.add('hidden');
+
+            const feedPromises = RSS_FEEDS.map(async (feed) => {
+                try {
+                    const xmlText = await fetchFeed(feed);
+                    const articles = parseRSS(xmlText, feed);
+                    return { feed, articles, error: null };
+                } catch (err) {
+                    console.error(`Failed to fetch/parse ${feed.name}:`, err.message);
+                    return { feed, articles: [], error: err.message };
+                }
+            });
+
+            const results = await Promise.all(feedPromises);
+            allArticles = [];
+            const errors = [];
+            results.forEach(({ feed, articles, error }) => {
+                if (error) errors.push({ feed: feed.name, error });
+                allArticles.push(...articles);
+            });
+
+            shuffleArray(allArticles);
+            isFetching = false;
+
+            if (allArticles.length === 0 && errors.length === RSS_FEEDS.length) {
+                showErrorState('All RSS feeds failed to load. All proxies are currently unavailable.');
+                return;
+            }
+            if (allArticles.length === 0 && errors.length > 0) {
+                showErrorState(`Some feeds failed and no articles were found. Errors: ${errors.map(e => e.feed).join(', ')}.`);
+                return;
+            }
+            if (allArticles.length === 0) {
+                showEmptyState();
+                return;
+            }
+            if (errors.length > 0) {
+                showToast(`Warning: Could not load ${errors.map(e => e.feed).join(', ')}.`, 'info');
+            }
+
+            renderArticles();
+            hideLoadingState();
+        }
+
+        // ───────────── UI STATES ─────────────
+        function showLoadingState() {
+            loadingContainer.classList.remove('hidden');
+            loadingContainer.innerHTML = '';
+            for (let i = 0; i < 6; i++) {
+                const skeleton = document.createElement('div');
+                skeleton.className = 'bg-white rounded-2xl p-6 border border-gray-200 shadow-sm';
+                skeleton.innerHTML = `<div class="skeleton h-5 w-20 mb-4"></div>
+                    <div class="skeleton h-6 w-full mb-3"></div>
+                    <div class="skeleton h-4 w-full mb-2"></div>
+                    <div class="skeleton h-4 w-5/6 mb-2"></div>
+                    <div class="skeleton h-4 w-2/3 mb-6"></div>
+                    <div class="skeleton h-8 w-full mb-3"></div>
+                    <div class="skeleton h-10 w-full rounded-lg"></div>`;
+                loadingContainer.appendChild(skeleton);
+            }
+        }
+        function hideLoadingState() { loadingContainer.classList.add('hidden'); loadingContainer.innerHTML = ''; }
+        function showErrorState(msg) { hideLoadingState(); articlesGrid.classList.add('hidden'); emptyState.classList.add('hidden'); errorContainer.classList.remove('hidden'); errorMessage.textContent = msg; }
+        function showEmptyState() { hideLoadingState(); articlesGrid.classList.add('hidden'); errorContainer.classList.add('hidden'); emptyState.classList.remove('hidden'); }
+
+        // ───────────── RENDER ─────────────
+        function renderArticles() {
+            hideLoadingState();
+            errorContainer.classList.add('hidden');
+            emptyState.classList.add('hidden');
+            articlesGrid.classList.remove('hidden');
+            articlesGrid.innerHTML = '';
+
+            if (allArticles.length === 0) {
+                showEmptyState();
+                return;
+            }
+
+            allArticles.forEach(article => {
+                articlesGrid.appendChild(createArticleCard(article));
+            });
+            updateScoredCount();
+        }
+
+        function createArticleCard(article) {
+            const isSubmitted = article.id in submittedScores;
+            const existingScore = isSubmitted ? submittedScores[article.id].biasScore : 0;
+
+            const card = document.createElement('div');
+            card.className = `article-card bg-white rounded-2xl p-6 border border-gray-200 shadow-sm flex flex-col ${isSubmitted ? 'submitted' : ''}`;
+            card.setAttribute('data-article-id', article.id);
+
+            // Title
+            const titleEl = document.createElement('h3');
+            titleEl.className = 'text-base font-semibold text-gray-900 mb-2 leading-snug';
+            titleEl.textContent = article.title;
+
+            // Snippet
+            const snippetEl = document.createElement('p');
+            snippetEl.className = 'text-sm text-gray-500 mb-2 leading-relaxed flex-grow';
+            snippetEl.textContent = article.snippet;
+
+            // Full text container
+            const fullTextContainer = document.createElement('div');
+            fullTextContainer.className = 'article-full-text text-sm text-gray-600 mb-4 leading-relaxed';
+            fullTextContainer.textContent = article.fullText;
+
+            // Toggle button
+            const toggleBtn = document.createElement('button');
+            toggleBtn.className = 'text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline mb-4 self-start';
+            toggleBtn.textContent = 'Show Full Article';
+            toggleBtn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const isExpanded = fullTextContainer.classList.contains('expanded');
+                if (isExpanded) {
+                    fullTextContainer.classList.remove('expanded');
+                    toggleBtn.textContent = 'Show Full Article';
+                    snippetEl.classList.remove('hidden');
+                } else {
+                    fullTextContainer.classList.add('expanded');
+                    toggleBtn.textContent = 'Hide Full Article';
+                    snippetEl.classList.add('hidden');
+                }
+            });
+
+            // Slider – continuous (no step)
+            const sliderContainer = document.createElement('div');
+            sliderContainer.className = 'mb-4';
+
+            const sliderHeader = document.createElement('div');
+            sliderHeader.className = 'flex items-center justify-between mb-2';
+            const sliderLabel = document.createElement('span');
+            sliderLabel.className = 'text-xs font-medium text-gray-500 uppercase tracking-wider';
+            sliderLabel.textContent = 'Political Bias';
+
+            const biasValueDisplay = document.createElement('span');
+            biasValueDisplay.className = 'inline-flex items-center gap-1.5 text-sm font-semibold text-gray-800';
+            const dotSpan = document.createElement('span');
+            dotSpan.className = `bias-dot ${getBiasDotColor(existingScore)}`;
+            const valueSpan = document.createElement('span');
+            valueSpan.textContent = existingScore.toFixed(1);
+            const labelSpan = document.createElement('span');
+            labelSpan.className = 'text-xs text-gray-400 font-normal';
+            labelSpan.textContent = getBiasLabel(existingScore);
+            biasValueDisplay.appendChild(dotSpan);
+            biasValueDisplay.appendChild(valueSpan);
+            biasValueDisplay.appendChild(labelSpan);
+            sliderHeader.appendChild(sliderLabel);
+            sliderHeader.appendChild(biasValueDisplay);
+
+            const rangeInput = document.createElement('input');
+            rangeInput.type = 'range';
+            rangeInput.min = '-1';
+            rangeInput.max = '1';
+            rangeInput.step = 'any';   // smooth, no steps
+            rangeInput.value = existingScore;
+            rangeInput.className = 'w-full';
+            rangeInput.setAttribute('aria-label', 'Political bias score from -1 (left) to 1 (right)');
+
+            const labelsRow = document.createElement('div');
+            labelsRow.className = 'flex justify-between text-xs text-gray-400 mt-1 px-0.5';
+            labelsRow.innerHTML = `<span>Left<br>−1.0</span><span>Center<br>0</span><span>Right<br>+1.0</span>`;
+
+            const rangeWrapper = document.createElement('div');
+            rangeWrapper.className = 'relative';
+            rangeWrapper.appendChild(rangeInput);
+            rangeWrapper.appendChild(labelsRow);
+            sliderContainer.appendChild(sliderHeader);
+            sliderContainer.appendChild(rangeWrapper);
+
+            rangeInput.addEventListener('input', () => {
+                const val = parseFloat(rangeInput.value);
+                valueSpan.textContent = val.toFixed(1);
+                labelSpan.textContent = getBiasLabel(val);
+                dotSpan.className = `bias-dot ${getBiasDotColor(val)}`;
+            });
+
+            // Submit button
+            const submitBtn = document.createElement('button');
+            submitBtn.className = `w-full py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 shadow-sm ${
+                isSubmitted ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100' :
+                'bg-indigo-600 text-white hover:bg-indigo-700 hover:shadow-md'}`;
+            submitBtn.innerHTML = isSubmitted ?
+                `<span class="flex items-center justify-center gap-2"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Update Score</span>` :
+                `<span class="flex items-center justify-center gap-2"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>Submit Score</span>`;
+
+            submitBtn.addEventListener('click', () => {
+                const score = parseFloat(rangeInput.value);
+                submitScore(article, score, card, submitBtn, rangeInput, biasValueDisplay, valueSpan, labelSpan, dotSpan);
+            });
+
+            // Header row (no source badge)
+            const headerRow = document.createElement('div');
+            headerRow.className = 'flex items-center flex-wrap gap-2 mb-3';
+            if (isSubmitted) {
+                const indicatorSpan = document.createElement('span');
+                indicatorSpan.className = 'inline-flex items-center gap-1 text-xs font-medium text-emerald-600';
+                indicatorSpan.innerHTML = `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Scored: ${existingScore.toFixed(1)}`;
+                headerRow.appendChild(indicatorSpan);
+            }
+
+            card.appendChild(headerRow);
+            card.appendChild(titleEl);
+            card.appendChild(snippetEl);
+            card.appendChild(fullTextContainer);
+            card.appendChild(toggleBtn);
+            card.appendChild(sliderContainer);
+            card.appendChild(submitBtn);
+
+            return card;
+        }
+
+        function submitScore(article, score, card, submitBtn, rangeInput, biasValueDisplay, valueSpan, labelSpan, dotSpan) {
+            const now = new Date().toISOString();
+            const scoreData = {
+                biasScore: score,
+                submittedAt: now,
+                title: article.title,
+                description: article.fullText,
+                source: article.source,
+                feedUrl: article.feedUrl,
+            };
+
+            // Update in-memory
+            submittedScores[article.id] = scoreData;
+            // Save to Gun
+            saveSubmissionToGun(article.id, scoreData);
+
+            updateScoredCount();
+
+            card.classList.add('submitted');
+            submitBtn.className = 'w-full py-2.5 rounded-xl font-semibold text-sm transition-all duration-200 shadow-sm bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100';
+            submitBtn.innerHTML = `<span class="flex items-center justify-center gap-2"><svg class="w-4 h-4" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Update Score</span>`;
+
+            const headerRow = card.querySelector('.flex.items-center.flex-wrap');
+            let indicatorSpan = headerRow.querySelector('span');
+            if (!indicatorSpan) {
+                indicatorSpan = document.createElement('span');
+                headerRow.appendChild(indicatorSpan);
+            }
+            indicatorSpan.className = 'inline-flex items-center gap-1 text-xs font-medium text-emerald-600';
+            indicatorSpan.innerHTML = `<svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd"/></svg>Scored: ${score.toFixed(1)}`;
+
+            card.style.transform = 'scale(1.02)';
+            card.style.boxShadow = '0 16px 32px rgba(16, 185, 129, 0.2)';
+            setTimeout(() => { card.style.transform = ''; card.style.boxShadow = ''; }, 200);
+            showToast(`Score ${score.toFixed(1)} saved.`, 'success');
+        }
+
+        // ───────────── EXPORT ─────────────
+        function exportJSON() {
+            const submissions = Object.values(submittedScores);
+            if (submissions.length === 0) {
+                showToast('No scored articles to export.', 'info');
+                return;
+            }
+            const exportData = {
+                exportDate: new Date().toISOString(),
+                totalScored: submissions.length,
+                articles: submissions.map(s => ({
+                    title: s.title,
+                    description: s.description,
+                    source: s.source,
+                    feedUrl: s.feedUrl,
+                    biasScore: s.biasScore,
+                    submittedAt: s.submittedAt,
+                })),
+            };
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `news-bias-annotations_${new Date().toISOString().replace(/[:.]/g, '-').slice(0,19)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+            showToast(`Exported ${submissions.length} articles.`, 'success');
+        }
+
+        // ───────────── EVENTS ─────────────
+        shuffleBtn.addEventListener('click', () => {
+            if (allArticles.length === 0) return;
+            shuffleArray(allArticles);
+            renderArticles();
+            showToast('Articles shuffled randomly', 'info');
+        });
+
+        refreshBtn.addEventListener('click', () => {
+            if (isFetching) return;
+            refreshIcon.style.transition = 'transform 0.6s ease';
+            refreshIcon.style.transform = 'rotate(360deg)';
+            setTimeout(() => { refreshIcon.style.transition = 'none'; refreshIcon.style.transform = 'rotate(0deg)'; }, 600);
+            fetchAllFeeds();
+        });
+
+        exportBtn.addEventListener('click', exportJSON);
+
+        document.addEventListener('keydown', (e) => {
+            if ((e.ctrlKey || e.metaKey) && e.key === 'e') {
+                e.preventDefault();
+                exportJSON();
+            }
+            if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'r') {
+                e.preventDefault();
+                fetchAllFeeds();
+            }
+        });
+
+        // ───────────── INIT ─────────────
+        async function init() {
+            // Load existing scores from Gun
+            await loadSubmissionsFromGun();
+            updateScoredCount();
+            exportBtn.disabled = (Object.keys(submittedScores).length === 0);
+            fetchAllFeeds();
+        }
+
+        init();
+    })();
+</script>
+</body>
+</html>
