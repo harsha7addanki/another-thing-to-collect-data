@@ -216,7 +216,8 @@
 
         // ───────────── GUN DB ─────────────
         // Initialize Gun (local-only by default; no peers)
-        const gun = Gun();
+        // no good free server hosts fuck those guys
+        const gun = Gun(['https://herokuapp.com', 'https://gun.eco']);
 
         // ───────────── STATE ─────────────
         let allArticles = [];          // { id, title, snippet, fullText, source, sourceColor, feedUrl }
