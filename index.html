@@ -218,7 +218,7 @@
         // Replace these with your own Supabase project URL and anon key
         const SUPABASE_URL = 'https://qdlymjzjfdrporqpmtpf.supabase.co';
         const SUPABASE_ANON_KEY = 'sb_publishable_CpbTmlXNJkhneoY9CYVSvw_Wpo1NpPn';
-        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         // Table name in Supabase: bias_annotations
         // Columns:
@@ -321,7 +321,7 @@
         // ───────────── SUPABASE DATA HANDLING ─────────────
         async function loadSubmissionsFromSupabase() {
             try {
-                const { data, error } = await supabase
+                const { data, error } = await supabaseClient
                     .from('bias_annotations')
                     .select('article_id, bias_score, submitted_at, title, description, source, feed_url');
 
@@ -347,7 +347,7 @@
 
         async function saveSubmissionToSupabase(articleId, scoreData) {
             try {
-                const { error } = await supabase
+                const { error } = await supabaseClient
                     .from('bias_annotations')
                     .upsert({
                         article_id: articleId,
