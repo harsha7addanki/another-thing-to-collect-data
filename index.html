@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>News Bias Annotator</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Gun.js CDN -->
-    <script src="https://cdn.jsdelivr.net/npm/gun/gun.min.js"></script>
+    <!-- Supabase client -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
@@ -118,8 +118,8 @@
                         </svg>
                     </div>
                     <div>
-                        <h1 class="text-xl font-bold text-gray-900 tracking-tight">Data collection</h1>
-                        <p class="text-sm text-gray-500">Look through and show what you think the political bias is.</p>
+                        <h1 class="text-xl font-bold text-gray-900 tracking-tight">News Bias Annotator</h1>
+                        <p class="text-sm text-gray-500">Score political bias – sources hidden</p>
                     </div>
                 </div>
                 <div class="flex items-center gap-3 flex-wrap">
@@ -190,7 +190,7 @@
 
 <footer class="border-t border-gray-200 bg-white mt-12">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4 text-center text-sm text-gray-400">
-        Sources hidden · Full articles available · Scores stored with Gun.js
+        Sources hidden · Full articles available · Scores stored in Supabase
     </div>
 </footer>
 
@@ -214,16 +214,26 @@
 
         const MAX_SNIPPET_LENGTH = 180;
 
-        // ───────────── GUN DB ─────────────
-        // Initialize Gun (local-only by default; no peers)
-        // 
-        const gun = Gun([
-  'https://harsha7addanki-data-collection-server-saver.hf.space',// yes ik im broke
-  ]);
+        // ───────────── SUPABASE SETUP ─────────────
+        // Replace these with your own Supabase project URL and anon key
+        const SUPABASE_URL = 'https://qdlymjzjfdrporqpmtpf.supabase.co';
+        const SUPABASE_ANON_KEY = 'sb_publishable_CpbTmlXNJkhneoY9CYVSvw_Wpo1NpPn';
+        const supabase = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+        // Table name in Supabase: bias_annotations
+        // Columns:
+        //   id            uuid primary key default gen_random_uuid()
+        //   article_id    text unique not null
+        //   title         text
+        //   description   text
+        //   source        text
+        //   feed_url      text
+        //   bias_score    float8
+        //   submitted_at  timestamptz
 
         // ───────────── STATE ─────────────
         let allArticles = [];          // { id, title, snippet, fullText, source, sourceColor, feedUrl }
-        let submittedScores = {};     // cached in-memory copy
+        let submittedScores = {};     // in-memory copy: { articleId: { biasScore, submittedAt, ... } }
         let isFetching = false;
 
         // ───────────── DOM ELEMENTS ─────────────
@@ -308,26 +318,52 @@
             }, 2500);
         }
 
-        // ───────────── GUN SUPPORT ─────────────
-        function loadSubmissionsFromGun() {
-            return new Promise((resolve) => {
+        // ───────────── SUPABASE DATA HANDLING ─────────────
+        async function loadSubmissionsFromSupabase() {
+            try {
+                const { data, error } = await supabase
+                    .from('bias_annotations')
+                    .select('article_id, bias_score, submitted_at, title, description, source, feed_url');
+
+                if (error) throw error;
+
                 const submissions = {};
-                gun.get('submissions').map().once((data, key) => {
-                    if (data && key) {
-                        submissions[key] = data;
-                    }
+                data.forEach(row => {
+                    submissions[row.article_id] = {
+                        biasScore: row.bias_score,
+                        submittedAt: row.submitted_at,
+                        title: row.title,
+                        description: row.description,
+                        source: row.source,
+                        feedUrl: row.feed_url,
+                    };
                 });
-                // Gun loads asynchronously; we wait a short time to collect all.
-                // To be safe, we use a timeout (Gun has no built-in "all loaded" for map)
-                setTimeout(() => {
-                    submittedScores = submissions;
-                    resolve();
-                }, 500);
-            });
+                submittedScores = submissions;
+            } catch (err) {
+                console.error('Failed to load submissions from Supabase:', err);
+                showToast('Could not load previous scores. Using empty state.', 'error');
+            }
         }
 
-        function saveSubmissionToGun(articleId, scoreData) {
-            gun.get('submissions').get(articleId).put(scoreData);
+        async function saveSubmissionToSupabase(articleId, scoreData) {
+            try {
+                const { error } = await supabase
+                    .from('bias_annotations')
+                    .upsert({
+                        article_id: articleId,
+                        title: scoreData.title,
+                        description: scoreData.description,
+                        source: scoreData.source,
+                        feed_url: scoreData.feedUrl,
+                        bias_score: scoreData.biasScore,
+                        submitted_at: scoreData.submittedAt,
+                    }, { onConflict: 'article_id' });
+
+                if (error) throw error;
+            } catch (err) {
+                console.error('Failed to save score to Supabase:', err);
+                showToast('Error saving score to database.', 'error');
+            }
         }
 
         // ───────────── SCORED COUNT UPDATE ─────────────
@@ -538,7 +574,7 @@
                 }
             });
 
-            // Slider – continuous (no step)
+            // Slider – continuous (step="any")
             const sliderContainer = document.createElement('div');
             sliderContainer.className = 'mb-4';
 
@@ -638,8 +674,8 @@
 
             // Update in-memory
             submittedScores[article.id] = scoreData;
-            // Save to Gun
-            saveSubmissionToGun(article.id, scoreData);
+            // Save to Supabase
+            saveSubmissionToSupabase(article.id, scoreData);
 
             updateScoredCount();
 
@@ -722,8 +758,8 @@
 
         // ───────────── INIT ─────────────
         async function init() {
-            // Load existing scores from Gun
-            await loadSubmissionsFromGun();
+            // Load existing scores from Supabase
+            await loadSubmissionsFromSupabase();
             updateScoredCount();
             exportBtn.disabled = (Object.keys(submittedScores).length === 0);
             fetchAllFeeds();
